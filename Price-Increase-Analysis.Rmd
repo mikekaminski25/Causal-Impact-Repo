@@ -1,0 +1,23 @@
+---
+title: "Causal-Impact"
+author: "Mike Kaminski"
+date: "2023-03-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+```{r}
+library(zoo)
+library(lares)
+library(yfR)
+library(readr)
+library(tidyr)
+library(dplyr)
+library(CausalImpact)
+library(TTR)
+```
+
