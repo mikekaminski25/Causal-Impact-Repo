@@ -168,12 +168,143 @@ cor_log_7 <- a_7dma_log$data$corr
 stock_log_7 <-a_7dma_log$data$variables
 log_7 <- data.frame(col1 = stock_log_7,col2 =cor_log_7) #creates a dataframe to review
 head(log_7)
+which(abs(a_7dma_log$data$corr) >= (0.68))
 
 ```
 When we take the log of sales, we actually get higher correlations, which will act better for our baseline.  Just need to remember to take reverse log out of the final values
 
 Modeling
+
+Need to establish the pre and post periods.  These periods can be shortened as we tune the model if needed. Start date will be 03-01-2020 since that's the first full month of data.  The intervention (price increase) occurred on the first of the year in 2023. A variable called time points is created for the Causal Impact model
 ```{r}
+pre.start <- "2020-03-01" #start of pre period
+pre.end <- "2022-12-31" #end of pre period
+post.start <- "2023-01-01" #intervention start
+post.end <- "2023-02-28" #end of data/intervention end
+
+pre.period <- as.Date(c(pre.start, pre.end))
+post.period <- as.Date(c(post.start,post.end))
+
+time.points <- df_final_7dma[,1]
+```
+
+
+Other variables are created for the model as well.  The first 50 most correlated stocks will be used initially.  The top 100 were all above +/- 0.678474, so it might be worth exploring all 100 or even more - anything above +/- 0.65 maybe
+```{r}
+corr_stonks <- a_7dma_log$data$variables[1:50] #names of stocks from log of 7dma
+
+df_final_7dma$mov_avg7_log <- log(df_final_7dma$mov_avg7) #creates log values based on 7dma
+
+stonks <- as_tibble(df_final_7dma[,c('mov_avg7_log',corr_stonks)]) #creates a tibble for the model
+
+baseline <- zoo(stonks, order.by = time.points) #creates a time series for stocks and time.points
+baseline_log <- zoo(stonks, order.by = time.points) #creates a time series for stocks and time.points
+```
+
+Seasonality Tests
+
+First attempt with default values for the arguments - no seasonality
+```{r}
+impact_none <- CausalImpact(baseline, 
+                            pre.period, 
+                            post.period,
+                            alpha = 0.05,
+                            model.args = list(
+                            niter = 10000
+                            # prior.level.sd = 0.01, #default is 0.01
+                            # nseasons = 12, #default is 1
+                            # season.duration = 30, #default is 1
+                            # dynamic.regression = FALSE, #default is FALSE
+                            # max.flips = 10000 #default is -1
+                           )
+                        )
+
+summary(impact_none)
+# impact_none$model$model.args
+
+```
+
+Adding in Daily Seasonality
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_daily <- CausalImpact(baseline, 
+                            pre.period, 
+                            post.period,
+                            alpha = 0.05,
+                            model.args = list(
+                            niter = 10000,
+                            # prior.level.sd = 0.01, #default is 0.01
+                            nseasons = 7, #default is 1
+                            season.duration = 1 #default is 1
+                            # dynamic.regression = FALSE, #default is FALSE
+                            # max.flips = 10000 #default is -1
+                           )
+                        )
+
+summary(impact_daily)
+# impact_none$model$model.args
+
+proc.time() - ptm #stops the clock
+```
+
+Weekly seasonality
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_weekly <- CausalImpact(baseline, 
+                            pre.period, 
+                            post.period,
+                            alpha = 0.05,
+                            model.args = list(
+                            niter = 10000,
+                            # prior.level.sd = 0.01, #default is 0.01
+                            nseasons = 52, #default is 1
+                            season.duration = 7 #default is 1
+                            # dynamic.regression = FALSE, #default is FALSE
+                            # max.flips = 10000 #default is -1
+                           )
+                        )
+
+summary(impact_weekly)
+# impact_none$model$model.args
+
+proc.time() - ptm #stops the clock
+
+```
+
+
+Monthly
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_monthly <- CausalImpact(baseline, 
+                            pre.period, 
+                            post.period,
+                            alpha = 0.05,
+                            model.args = list(
+                            niter = 10000,
+                            # prior.level.sd = 0.01, #default is 0.01
+                            nseasons = 12, #default is 1
+                            season.duration = 30 #default is 1
+                            # dynamic.regression = FALSE, #default is FALSE
+                            # max.flips = 10000 #default is -1
+                           )
+                        )
+
+summary(impact_monthly)
+# impact_none$model$model.args
+
+proc.time() - ptm #stops the clock
+```
+
+daily has the lowest, but no seasonality and monthly are pretty close.  hyperparatmer tuning will be done for daily seasonality.
+```{r}
+init_results <- data.frame(none = impact_none$summary$p[1],
+                           daily = impact_daily$summary$p[1],
+                           weekly = impact_weekly$summary$p[1],
+                           monthly = impact_monthly$summary$p[1])
+init_results
 
 ```
 
