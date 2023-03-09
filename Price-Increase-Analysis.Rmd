@@ -21,20 +21,17 @@ library(CausalImpact)
 library(TTR)
 ```
 
-Get a list of tickers from the S&P500
-```{r}
+Gets a list of all the tickers in the S&P500
+```{r warning=FALSE}
 set.seed(1234)
-
 
 n_tickers <- 500
 df_sp500 <- yf_index_composition("SP500")
 rnd_tickers <- base::sample(df_sp500$ticker, n_tickers)
 
-# cat(paste0("The selected tickers are: ",
-#             paste0(rnd_tickers, collapse = ", ")))
 ```
 
-Extract prices from yahoo finance
+Extracts prices from yahoo finance
 ```{r message = FALSE, warning = FALSE}
 df_yf <- yf_get(tickers = rnd_tickers,
                 first_date = '2020-01-02',
@@ -44,7 +41,7 @@ head(df_yf)
 
 Remove unnecessary columns and add a 5, 10, and 20 day moving average.  These will come into play later in the code
 ```{r}
-df_stocks <- df_yf %>%
+df_stock_prices_ma <- df_yf %>%
   select(ticker, ref_date, price_close) %>%
   group_by(ticker) %>%
   mutate(mov_avg5 = SMA(price_close, n =5)) %>%
@@ -56,22 +53,40 @@ df_stocks <- df_yf %>%
 
 ```
 
+writes to a .csv and saves
+```{r}
+write.csv(df_stock_prices_ma, 'stocks0308.csv')
+```
+
 Stocks are only priced on days the markets are open, so a sequence of dates has been created to account for the days when there wasn't a closing price.  Dates are right joined by the sequence of dates by ticker. Any day the market is closed means that the price_close value is zero
 ```{r}
-df_date <- df_stocks %>%
+df_date_list <- df_stock_prices_ma %>%
   group_by(ticker) %>%
   complete(ref_date = seq.Date(as.Date('2019-12-29'), Sys.Date(), by="day"))
 ```
 
 This block of code inserts the 10-day moving average when a value is blank.  5 or 20-day moving average can be used as well. January 15th 2020 is the first day that a 10-day moving average is available, so the date is filtered on that value  
 ```{r}
-df_stocks1 <- df_date %>%
+df_stock_prices_ma_clean <- df_date_list %>%
   group_by(ticker) %>%
   fill(mov_avg10, .direction = "downup")  %>%
   mutate(price_close = ifelse(is.na(price_close), mov_avg10, price_close))  %>%
   select(c(ticker,ref_date,price_close)) %>%
-  filter(ref_date >= '2020-01-15') %>%
-  mutate(price_close = round(price_close,2))
+  filter(ref_date >= '2020-02-01') %>% # first day of sales data
+  mutate(price_close = round(price_close,2))%>%
+  ungroup()
+```
+
+Alternatively, I've created a df based just on the 5-day moving average - 1 week - to be used later in the data set
+```{r}
+df_stock_prices_5dma <- df_date_list %>%
+  group_by(ticker) %>%
+  fill(mov_avg5, .direction = "downup")  %>%
+  select(c(ticker,ref_date,mov_avg5)) %>%
+  filter(ref_date >= '2020-02-01') %>% #most recent sales data
+  mutate(mov_avg5 = round(mov_avg5,2)) %>%
+  select(ref_date, ticker, mov_avg5) %>%
+  as.data.frame()
 ```
 
 This line of code imports the sales data.
@@ -87,28 +102,37 @@ df_sales_7dma <- df_sales %>%
   mutate(mov_avg7 = round(SMA(Sales, n =7),2))
 ```
 
-This merges the sales and stocks data
+This merges the daily sales and the daily stocks data, replacing NAs with 10dma
 ```{r}
-df_final <- merge(df_stocks1, df_sales, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
+df_final_daily <- merge(df_stock_prices_ma_clean, df_sales, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
   pivot_wider(names_from = ticker, values_from = price_close) %>%
   filter(Sales >=0) %>%
   as.data.frame()
 
 ```
 
-This merges the sales 7dma and the stocks data
+This merges the sales 7dma and the daily stocks data
 ```{r}
-df_final_7dma <- merge(df_stocks1, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
+df_final_7dma_daily <- merge(df_stock_prices_ma_clean, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
   select(-c(Sales)) %>%
   pivot_wider(names_from = ticker, values_from = price_close) %>%
   filter(mov_avg7 >=0) %>%
   as.data.frame()
 ```
 
-In order to create a synthetic control group aka a baseline, we want to see which securities are most related to the number of sales.  Initially I'll use raw values, but log values and 7dma values might be interesting to look at as well.
-
+This merges the sales 7dma and the 5dma stocks data
 ```{r}
-m <- df_final[,-1]
+df_final_7dma_5dma <- merge(df_stock_prices_5dma, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
+  select(-c(Sales)) %>%
+  pivot_wider(names_from = ticker, values_from = mov_avg5) %>%
+  filter(mov_avg7 >=0)%>%
+  as.data.frame()
+```
+
+
+In order to create a synthetic control group aka a baseline, we want to see which securities are most related to the number of sales.  Initially I'll use raw values, but log values and 7dma values might be interesting to look at as well.
+```{r}
+m <- df_final_daily[,-1]
 a <- corr_var(m,
               Sales,
               top = 25,
@@ -119,7 +143,7 @@ plot(a, cex = .5,cex.axis=.5)
 Correlations don't look too useful, the most correlated is MOH with a corr of -0.54.  We'll try with log values of sales
 
 ```{r}
-m_log <- log(df_final[,-1])
+m_log <- log(df_final_daily[,-1])
 a_log <- corr_var(m_log,
               Sales,
               top = 25,
@@ -128,59 +152,73 @@ a_log <- corr_var(m_log,
 plot(a_log, cex = .5,cex.axis=.5)
 ```
 
-These results are actually worse than before.  There might be too much variablity in the daily sales data, so we'll check against the 7dma
+These results are actually worse than before.  There might be too much variablity in the daily sales data, so we'll check against the 7dma and the daily prices
 
 ```{r}
-m_7dma <- df_final_7dma[,-1]
+m_7dma <- df_final_7dma_daily[,-1]
 a_7dma <- corr_var(m_7dma,
               mov_avg7,
-              top = 100,
+              top = 25,
               #max_pvalue = 0.05
               )
 plot(a_7dma, cex = .5,cex.axis=.5)
 ```
 
-These results look a lot better.  The top 25 range from -.783 to -.727.  Lets look at the top 100
+These results look a lot better.  The top 25 range from -.783 to -.727.
+
+Lastly, we'll check the 7dma for sales and 5dma for stocks
+```{r}
+m_7dma_5dma <- df_final_7dma_5dma[,-1]
+a_7dma_5dma <- corr_var(m_7dma_5dma,
+              mov_avg7,
+              top = 25,
+              #max_pvalue = 0.05
+              )
+plot(a_7dma, cex = .5,cex.axis=.5)
+```
+7dma and 5dma are more or less the same as 7dma and daily.  The former includes a positive correlation with T, while the later does not. Using the 7dma and 5dma might be better given since they're both moving averages.
+
+We look at the top 100 for 7dma and 5dma
 
 ```{r}
-m_7dma <- df_final_7dma[,-1]
-a_7dma <- corr_var(m_7dma,
+m_7dma_5dma <- df_final_7dma_5dma[,-1]
+a_7dma_5dma <- corr_var(m_7dma_5dma,
               mov_avg7,
               top = 100,
               #max_pvalue = 0.05
               )
 # plot(a_7dma, cex = .5,cex.axis=.5) #the plot looks messy, but the values are included below
-a_7dma$data$corr
-a_7dma$data$variables
+a_7dma_5dma$data$corr
+a_7dma_5dma$data$variables
 ```
 57 of the top 100 stocks are above +/- 0.695, so we can take those and use as our baseline.
 
 We can try using the log of the 7dma as well
 ```{r}
-m_7dma_log <- log(df_final_7dma[,-1])
-a_7dma_log <- corr_var(m_7dma_log,
+m_7dma_5dma_log <- log(df_final_7dma_5dma[,-1])
+a_7dma_5dma_log <- corr_var(m_7dma_5dma_log,
               mov_avg7,
               top = 100,
               #max_pvalue = 0.05
               )
-plot(a_7dma_log, cex = .5,cex.axis=.5) #the plot looks messy, but the values are included below
-cor_log_7 <- a_7dma_log$data$corr
-stock_log_7 <-a_7dma_log$data$variables
+plot(a_7dma_5dma_log, cex = .5,cex.axis=.5) #the plot looks messy, but the values are included below
+cor_log_7 <- a_7dma_5dma_log$data$corr
+stock_log_7 <-a_7dma_5dma_log$data$variables
 log_7 <- data.frame(col1 = stock_log_7,col2 =cor_log_7) #creates a dataframe to review
 head(log_7)
-which(abs(a_7dma_log$data$corr) >= (0.68))
+which(abs(a_7dma_5dma_log$data$corr) >= (0.695))
 
 ```
-When we take the log of sales, we actually get higher correlations, which will act better for our baseline.  Just need to remember to take reverse log out of the final values
+When we take the log of 7dma and 5dma, we actually get higher correlations 86 of the 100 are above 0.695, which will act better for our baseline.  Just need to remember to take reverse log out of the final values
 
-Modeling
+#Modeling
 
 Need to establish the pre and post periods.  These periods can be shortened as we tune the model if needed. Start date will be 03-01-2020 since that's the first full month of data.  The intervention (price increase) occurred on the first of the year in 2023. A variable called time points is created for the Causal Impact model
 ```{r}
 pre.start <- "2020-03-01" #start of pre period
 pre.end <- "2022-12-31" #end of pre period
 post.start <- "2023-01-01" #intervention start
-post.end <- "2023-02-28" #end of data/intervention end
+post.end <- "2023-02-27" #end of data/intervention end
 
 pre.period <- as.Date(c(pre.start, pre.end))
 post.period <- as.Date(c(post.start,post.end))
@@ -297,14 +335,103 @@ summary(impact_monthly)
 
 proc.time() - ptm #stops the clock
 ```
+Quarterly
+```{r}
+ptm <- proc.time() #starts the clock
 
-daily has the lowest, but no seasonality and monthly are pretty close.  hyperparatmer tuning will be done for daily seasonality.
+impact_quarterly <- CausalImpact(baseline, 
+                            pre.period, 
+                            post.period,
+                            alpha = 0.05,
+                            model.args = list(
+                            niter = 10000,
+                            # prior.level.sd = 0.01, #default is 0.01
+                            nseasons = 4, #default is 1
+                            season.duration = 91 #default is 1
+                            # dynamic.regression = FALSE, #default is FALSE
+                            # max.flips = 10000 #default is -1
+                           )
+                        )
+
+summary(impact_quarterly)
+```
+
+
+
+
+quarterly has the lowerst p value, but I'm a bit reluctant to use and is more for informational purposes.  Daily has the next lowest, but no seasonality and monthly are pretty close.  Hyperparameter tuning will be done for daily seasonality.
 ```{r}
 init_results <- data.frame(none = impact_none$summary$p[1],
                            daily = impact_daily$summary$p[1],
                            weekly = impact_weekly$summary$p[1],
-                           monthly = impact_monthly$summary$p[1])
+                           monthly = impact_monthly$summary$p[1],
+                           quarterly = impact_quarterly$summary$p[1])
 init_results
 
+```
+
+Function to hypertune parameters
+```{r}
+#default is the first value
+param_grid = list(niter = c(10000), 
+                  standardize.data = c(TRUE,FALSE),
+                  prior.level.sd = c(0.01, 0.001, 0.1),
+                  nseasons = c(7),
+                  season.duration = c(1),
+                  dynamic.regression = c(FALSE),
+                  max.flips = c(-1,1000,10000)
+                 )
+
+# Generate all combinations of parameters
+params = expand.grid(param_grid)
+params
+```
+
+```{r}
+n <- 2
+test_param <- params[c(sample(1:nrow(params), n, replace = FALSE)),]
+test_param
+```
+
+
+```{r}
+#creates an empty list to store p values of each model
+p = c()
+```
+
+```{r}
+ptm <- proc.time() #starts the clock
+for(i in 1:nrow(params)){
+# for(i in 1:nrow(test_param)){
+
+  # Fit a model using one parameter combination
+  m = CausalImpact(baseline,
+                   pre.period, 
+                   post.period,
+                   #alpha = 0.1, # can adjust alpha if necessary
+                   model.args = list(
+                     niter = params[i,1],
+                     standardize.data = params[i,2],
+                     prior.level.sd = params[i,3],
+                     nseasons = params[i,4],
+                     season.duration = params[i,5], 
+                     dynamic.regression = params[i,6],
+                     max.flips = params[i,7]
+                     )
+                   )
+
+  # Model performance
+  df_p <- m$summary$p[1]
+  # Save model performance metrics
+  p[i] = df_p
+  print(proc.time() - ptm)[3]
+
+}
+ proc.time() - ptm #stops the clock
+```
+
+```{r}
+results <- data.frame(params,p) %>% arrange(p)
+results
 ```
 
