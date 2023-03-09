@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 Libraries
-```{r}
+```{r message = FALSE, warning = FALSE}
 library(zoo)
 library(lares)
 library(yfR)
@@ -19,5 +19,161 @@ library(tidyr)
 library(dplyr)
 library(CausalImpact)
 library(TTR)
+```
+
+Get a list of tickers from the S&P500
+```{r}
+set.seed(1234)
+
+
+n_tickers <- 500
+df_sp500 <- yf_index_composition("SP500")
+rnd_tickers <- base::sample(df_sp500$ticker, n_tickers)
+
+# cat(paste0("The selected tickers are: ",
+#             paste0(rnd_tickers, collapse = ", ")))
+```
+
+Extract prices from yahoo finance
+```{r message = FALSE, warning = FALSE}
+df_yf <- yf_get(tickers = rnd_tickers,
+                first_date = '2020-01-02',
+                last_date = Sys.Date())
+head(df_yf)
+```
+
+Remove unnecessary columns and add a 5, 10, and 20 day moving average.  These will come into play later in the code
+```{r}
+df_stocks <- df_yf %>%
+  select(ticker, ref_date, price_close) %>%
+  group_by(ticker) %>%
+  mutate(mov_avg5 = SMA(price_close, n =5)) %>%
+  mutate(mov_avg10 = SMA(price_close, n =10)) %>%
+  mutate(mov_avg20 = SMA(price_close, n =20))%>%
+  mutate(ref_date = as.Date(ref_date)) %>%
+  mutate(price_close = as.numeric(price_close)) %>%
+  ungroup()
+
+```
+
+Stocks are only priced on days the markets are open, so a sequence of dates has been created to account for the days when there wasn't a closing price.  Dates are right joined by the sequence of dates by ticker. Any day the market is closed means that the price_close value is zero
+```{r}
+df_date <- df_stocks %>%
+  group_by(ticker) %>%
+  complete(ref_date = seq.Date(as.Date('2019-12-29'), Sys.Date(), by="day"))
+```
+
+This block of code inserts the 10-day moving average when a value is blank.  5 or 20-day moving average can be used as well. January 15th 2020 is the first day that a 10-day moving average is available, so the date is filtered on that value  
+```{r}
+df_stocks1 <- df_date %>%
+  group_by(ticker) %>%
+  fill(mov_avg10, .direction = "downup")  %>%
+  mutate(price_close = ifelse(is.na(price_close), mov_avg10, price_close))  %>%
+  select(c(ticker,ref_date,price_close)) %>%
+  filter(ref_date >= '2020-01-15') %>%
+  mutate(price_close = round(price_close,2))
+```
+
+This line of code imports the sales data.
+```{r}
+df_sales <- read.csv(file.choose())
+```
+
+Converts sales_df date to appropriate date format.
+This also creates a 7days moving average for sales since the data has some daily seasonality
+```{r}
+df_sales$Date <- as.Date(df_sales$Date, format = "%m/%d/%Y")
+df_sales_7dma <- df_sales %>%
+  mutate(mov_avg7 = round(SMA(Sales, n =7),2))
+```
+
+This merges the sales and stocks data
+```{r}
+df_final <- merge(df_stocks1, df_sales, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
+  pivot_wider(names_from = ticker, values_from = price_close) %>%
+  filter(Sales >=0) %>%
+  as.data.frame()
+
+```
+
+This merges the sales 7dma and the stocks data
+```{r}
+df_final_7dma <- merge(df_stocks1, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
+  select(-c(Sales)) %>%
+  pivot_wider(names_from = ticker, values_from = price_close) %>%
+  filter(mov_avg7 >=0) %>%
+  as.data.frame()
+```
+
+In order to create a synthetic control group aka a baseline, we want to see which securities are most related to the number of sales.  Initially I'll use raw values, but log values and 7dma values might be interesting to look at as well.
+
+```{r}
+m <- df_final[,-1]
+a <- corr_var(m,
+              Sales,
+              top = 25,
+              #max_pvalue = 0.05
+              )
+plot(a, cex = .5,cex.axis=.5)
+```
+Correlations don't look too useful, the most correlated is MOH with a corr of -0.54.  We'll try with log values of sales
+
+```{r}
+m_log <- log(df_final[,-1])
+a_log <- corr_var(m_log,
+              Sales,
+              top = 25,
+              #max_pvalue = 0.05
+              )
+plot(a_log, cex = .5,cex.axis=.5)
+```
+
+These results are actually worse than before.  There might be too much variablity in the daily sales data, so we'll check against the 7dma
+
+```{r}
+m_7dma <- df_final_7dma[,-1]
+a_7dma <- corr_var(m_7dma,
+              mov_avg7,
+              top = 100,
+              #max_pvalue = 0.05
+              )
+plot(a_7dma, cex = .5,cex.axis=.5)
+```
+
+These results look a lot better.  The top 25 range from -.783 to -.727.  Lets look at the top 100
+
+```{r}
+m_7dma <- df_final_7dma[,-1]
+a_7dma <- corr_var(m_7dma,
+              mov_avg7,
+              top = 100,
+              #max_pvalue = 0.05
+              )
+# plot(a_7dma, cex = .5,cex.axis=.5) #the plot looks messy, but the values are included below
+a_7dma$data$corr
+a_7dma$data$variables
+```
+57 of the top 100 stocks are above +/- 0.695, so we can take those and use as our baseline.
+
+We can try using the log of the 7dma as well
+```{r}
+m_7dma_log <- log(df_final_7dma[,-1])
+a_7dma_log <- corr_var(m_7dma_log,
+              mov_avg7,
+              top = 100,
+              #max_pvalue = 0.05
+              )
+plot(a_7dma_log, cex = .5,cex.axis=.5) #the plot looks messy, but the values are included below
+cor_log_7 <- a_7dma_log$data$corr
+stock_log_7 <-a_7dma_log$data$variables
+log_7 <- data.frame(col1 = stock_log_7,col2 =cor_log_7) #creates a dataframe to review
+head(log_7)
+
+```
+When we take the log of sales, we actually get higher correlations, which will act better for our baseline.  Just need to remember to take reverse log out of the final values
+
+Modeling
+```{r}
+
 ```
 
