@@ -578,14 +578,29 @@ df_series_results <- fortify(impact$series) %>%
   mutate(week.num = week(Date)) %>%
   mutate(week.day = weekdays(Date)) %>%
   filter(week.day == 'Saturday') %>%
-  mutate(point.effect = response - point.pred)
+  mutate(point.effect = response - point.pred) %>%
   
 df_series_results
 ```
+
 ```{r}
 impact.plot <- plot(impact)
 impact.plot <- impact.plot + theme_bw(base_size = 20)
 impact.plot
+```
+
+```{r}
+ggplot(df_series_results, aes(x = Date)) +
+  geom_line(aes(y = response, color = "Actual")) +
+  geom_line(aes(y = point.pred, color = "Counterfactual")) +
+  scale_color_manual(values = c("Actual" = "blue", "Counterfactual" = "red")) +
+  labs(title = "Actual and Counterfactual 7dma on Each Saturday",
+       x = "Date",
+       y = "7dma Sales",
+       color = "") +
+  scale_x_date(date_labels = "%b %d", breaks = df_series_results$Date)
+
+
 ```
 
 
