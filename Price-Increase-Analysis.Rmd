@@ -4,12 +4,12 @@ author: "Mike Kaminski"
 date: "2023-03-08"
 output: html_document
 ---
-
+# Initial Setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Libraries
+## Lirbraries
 ```{r message = FALSE, warning = FALSE}
 library(zoo)
 library(lares)
@@ -21,51 +21,56 @@ library(CausalImpact)
 library(TTR)
 ```
 
-Gets a list of all the tickers in the S&P500
+# Stock Prices for Baseline
+## Gets a list of all the tickers in the S&P500
 ```{r warning=FALSE}
-set.seed(1234)
-
-n_tickers <- 500
-df_sp500 <- yf_index_composition("SP500")
-rnd_tickers <- base::sample(df_sp500$ticker, n_tickers)
+# set.seed(1234)
+# 
+# n_tickers <- 500
+# df_sp500 <- yf_index_composition("SP500")
+# rnd_tickers <- base::sample(df_sp500$ticker, n_tickers)
 
 ```
 
-Extracts prices from yahoo finance
+##Extracts historical prices from yahoo finance - only run once, import stock prices from .csv
 ```{r message = FALSE, warning = FALSE}
-df_yf <- yf_get(tickers = rnd_tickers,
-                first_date = '2020-01-02',
-                last_date = Sys.Date())
-head(df_yf)
+# df_yf <- yf_get(tickers = rnd_tickers,
+#                 first_date = '2020-01-02',
+#                 last_date = Sys.Date())
+# head(df_yf)
 ```
 
-Remove unnecessary columns and add a 5, 10, and 20 day moving average.  These will come into play later in the code
+##Removes unnecessary columns and adds a 5, 10, and 20 day moving average.  These will come into play later in the code
 ```{r}
-df_stock_prices_ma <- df_yf %>%
-  select(ticker, ref_date, price_close) %>%
-  group_by(ticker) %>%
-  mutate(mov_avg5 = SMA(price_close, n =5)) %>%
-  mutate(mov_avg10 = SMA(price_close, n =10)) %>%
-  mutate(mov_avg20 = SMA(price_close, n =20))%>%
-  mutate(ref_date = as.Date(ref_date)) %>%
-  mutate(price_close = as.numeric(price_close)) %>%
-  ungroup()
+# df_stock_prices_ma <- df_yf %>%
+#   select(ticker, ref_date, price_close) %>%
+#   group_by(ticker) %>%
+#   mutate(mov_avg5 = SMA(price_close, n =5)) %>%
+#   mutate(mov_avg10 = SMA(price_close, n =10)) %>%
+#   mutate(mov_avg20 = SMA(price_close, n =20))%>%
+#   mutate(ref_date = as.Date(ref_date)) %>%
+#   mutate(price_close = as.numeric(price_close)) %>%
+#   ungroup()
 
 ```
 
-writes to a .csv and saves
+##writes to a .csv and saves
+```{r, include = FALSE}
+# write.csv(df_stock_prices_ma, 'stocks0308.csv')
+```
+
 ```{r}
-write.csv(df_stock_prices_ma, 'stocks0308.csv')
+df_stock_prices_ma <- read.csv(file.choose())
 ```
 
-Stocks are only priced on days the markets are open, so a sequence of dates has been created to account for the days when there wasn't a closing price.  Dates are right joined by the sequence of dates by ticker. Any day the market is closed means that the price_close value is zero
+##Stocks are only priced on days the markets are open, so a sequence of dates has been created to account for the days when there wasn't a closing price.  Dates are right joined by the sequence of dates by ticker. Any day the market is closed means that the price_close value is zero
 ```{r}
 df_date_list <- df_stock_prices_ma %>%
   group_by(ticker) %>%
   complete(ref_date = seq.Date(as.Date('2019-12-29'), Sys.Date(), by="day"))
 ```
 
-This block of code inserts the 10-day moving average when a value is blank.  5 or 20-day moving average can be used as well. January 15th 2020 is the first day that a 10-day moving average is available, so the date is filtered on that value  
+## Replaces NAs with 10dma.  5-day or 20-day moving average can be used as well. Sales data is from Feb 1 2020, so filtering for that 
 ```{r}
 df_stock_prices_ma_clean <- df_date_list %>%
   group_by(ticker) %>%
@@ -77,7 +82,7 @@ df_stock_prices_ma_clean <- df_date_list %>%
   ungroup()
 ```
 
-Alternatively, I've created a df based just on the 5-day moving average - 1 week - to be used later in the data set
+### Alternatively, a df is created based just on the 5-day moving average of the share price - 1 week
 ```{r}
 df_stock_prices_5dma <- df_date_list %>%
   group_by(ticker) %>%
@@ -89,20 +94,20 @@ df_stock_prices_5dma <- df_date_list %>%
   as.data.frame()
 ```
 
-This line of code imports the sales data.
+# Sales Data
+## Import Data
 ```{r}
 df_sales <- read.csv(file.choose())
 ```
 
-Converts sales_df date to appropriate date format.
-This also creates a 7days moving average for sales since the data has some daily seasonality
+## Converts sales_df date to appropriate date forma and creates a 7days moving average for sales
 ```{r}
 df_sales$Date <- as.Date(df_sales$Date, format = "%m/%d/%Y")
 df_sales_7dma <- df_sales %>%
   mutate(mov_avg7 = round(SMA(Sales, n =7),2))
 ```
 
-This merges the daily sales and the daily stocks data, replacing NAs with 10dma
+## merges  daily sales and the daily stocks data
 ```{r}
 df_final_daily <- merge(df_stock_prices_ma_clean, df_sales, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
   pivot_wider(names_from = ticker, values_from = price_close) %>%
@@ -111,7 +116,7 @@ df_final_daily <- merge(df_stock_prices_ma_clean, df_sales, by.x='ref_date',by.y
 
 ```
 
-This merges the sales 7dma and the daily stocks data
+## merges the 7dma sales and the daily stocks data
 ```{r}
 df_final_7dma_daily <- merge(df_stock_prices_ma_clean, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
   select(-c(Sales)) %>%
@@ -120,7 +125,7 @@ df_final_7dma_daily <- merge(df_stock_prices_ma_clean, df_sales_7dma, by.x='ref_
   as.data.frame()
 ```
 
-This merges the sales 7dma and the 5dma stocks data
+## merges the 7dma sales and 5dma stocks data
 ```{r}
 df_final_7dma_5dma <- merge(df_stock_prices_5dma, df_sales_7dma, by.x='ref_date',by.y='Date', all.x=TRUE) %>% 
   select(-c(Sales)) %>%
@@ -129,8 +134,7 @@ df_final_7dma_5dma <- merge(df_stock_prices_5dma, df_sales_7dma, by.x='ref_date'
   as.data.frame()
 ```
 
-
-In order to create a synthetic control group aka a baseline, we want to see which securities are most related to the number of sales.  Initially I'll use raw values, but log values and 7dma values might be interesting to look at as well.
+## In order to create a synthetic control group aka a baseline, we want to see which securities are most correlated to the number of sales.  Actual daily values are used initially, but log values as well as 7dma for sales and 5dma for stocks will be reviewed
 ```{r}
 m <- df_final_daily[,-1]
 a <- corr_var(m,
@@ -140,8 +144,9 @@ a <- corr_var(m,
               )
 plot(a, cex = .5,cex.axis=.5)
 ```
-Correlations don't look too useful, the most correlated is MOH with a corr of -0.54.  We'll try with log values of sales
+#### Correlations don't look too strong, the most correlated is MOH with a corr of -0.54.  Will try with log values of sales
 
+## Log values of daily sales and stock prices
 ```{r}
 m_log <- log(df_final_daily[,-1])
 a_log <- corr_var(m_log,
@@ -151,9 +156,9 @@ a_log <- corr_var(m_log,
               )
 plot(a_log, cex = .5,cex.axis=.5)
 ```
+#### These results are actually worse than before.  There might be too much variablity in the daily sales data, so willcheck against the 7dma and the daily prices
 
-These results are actually worse than before.  There might be too much variablity in the daily sales data, so we'll check against the 7dma and the daily prices
-
+## 7dma Sales and daily stock prices
 ```{r}
 m_7dma <- df_final_7dma_daily[,-1]
 a_7dma <- corr_var(m_7dma,
@@ -163,10 +168,9 @@ a_7dma <- corr_var(m_7dma,
               )
 plot(a_7dma, cex = .5,cex.axis=.5)
 ```
+#### These results look a lot better.  The top 25 range from -.783 to -.727.
 
-These results look a lot better.  The top 25 range from -.783 to -.727.
-
-Lastly, we'll check the 7dma for sales and 5dma for stocks
+## 7dma sales and 5dma stock prices
 ```{r}
 m_7dma_5dma <- df_final_7dma_5dma[,-1]
 a_7dma_5dma <- corr_var(m_7dma_5dma,
@@ -174,12 +178,11 @@ a_7dma_5dma <- corr_var(m_7dma_5dma,
               top = 25,
               #max_pvalue = 0.05
               )
-plot(a_7dma, cex = .5,cex.axis=.5)
+plot(a_7dma_5dma, cex = .5,cex.axis=.5)
 ```
-7dma and 5dma are more or less the same as 7dma and daily.  The former includes a positive correlation with T, while the later does not. Using the 7dma and 5dma might be better given since they're both moving averages.
+#### 7dma and 5dma are better, ranging from -0.819 to -0.775
 
-We look at the top 100 for 7dma and 5dma
-
+####Look at the top 100 for 7dma and 5dma
 ```{r}
 m_7dma_5dma <- df_final_7dma_5dma[,-1]
 a_7dma_5dma <- corr_var(m_7dma_5dma,
@@ -191,9 +194,9 @@ a_7dma_5dma <- corr_var(m_7dma_5dma,
 a_7dma_5dma$data$corr
 a_7dma_5dma$data$variables
 ```
-57 of the top 100 stocks are above +/- 0.695, so we can take those and use as our baseline.
+#### All hundred are above -0.70
 
-We can try using the log of the 7dma as well
+## log of the 7dma sales and 5dma stock prices
 ```{r}
 m_7dma_5dma_log <- log(df_final_7dma_5dma[,-1])
 a_7dma_5dma_log <- corr_var(m_7dma_5dma_log,
@@ -209,11 +212,16 @@ head(log_7)
 which(abs(a_7dma_5dma_log$data$corr) >= (0.695))
 
 ```
-When we take the log of 7dma and 5dma, we actually get higher correlations 86 of the 100 are above 0.695, which will act better for our baseline.  Just need to remember to take reverse log out of the final values
+```{r}
+# mean of each
+mean(abs(a_7dma_5dma$data$corr))
+mean(abs(a_7dma_5dma_log$data$corr))
+```
+#### The log of 7dma and 5dma have a larger average correlation than without log, so these varibles will be used.  Just need to remember to take reverse log out of the final values
 
-#Modeling
+# Modeling
 
-Need to establish the pre and post periods.  These periods can be shortened as we tune the model if needed. Start date will be 03-01-2020 since that's the first full month of data.  The intervention (price increase) occurred on the first of the year in 2023. A variable called time points is created for the Causal Impact model
+## Need to establish the pre and post periods.  These periods can be shortened as we tune the model if needed. Start date will be 03-01-2020 since that's the first full month of data.  The intervention (price increase) occurred on Jan 15th 2023. A variable called time points is created for the Causal Impact model
 ```{r}
 pre.start <- "2020-03-01" #start of pre period
 pre.end <- "2023-01-14" #end of pre period
@@ -223,30 +231,31 @@ post.end <- "2023-02-27" #end of data/intervention end
 pre.period <- as.Date(c(pre.start, pre.end))
 post.period <- as.Date(c(post.start,post.end))
 
-time.points <- df_final_7dma_5dma[,1]
+df_final_7dma_5dma_1 <- df_final_7dma_5dma %>% filter(ref_date >= pre.start) %>% select(-c(ref_date)) %>% log()
+time.points <- seq.Date(as.Date(pre.start), as.Date(post.end), by =1)
 ```
 
-
-Other variables are created for the model as well.  The first 50 most correlated stocks will be used initially.  The top 100 were all above +/- 0.675290, so it might be worth exploring all 100 or even more - anything above +/- 0.65 maybe
+### Other variables are created for the model as well.  The first 50 most correlated stocks will be used initially.  The top 100 were all fairly high, so it might be worth exploring all 100 or even more and also using less. 
 ```{r}
-baseline_tickers <- a_7dma_5dma_log$data$variables[1:50] #takes the first 50 stocks from the df
+baseline_tickers <- a_7dma_5dma_log$data$variables[1:50] #takes the first 50 stocks from the correlation created earlier.
 
-df_model <- as_tibble(m_7dma_5dma_log[,c('mov_avg7', baseline_tickers)]) #creates a tibble for the model
+df_model <- as_tibble(df_final_7dma_5dma_1[,c('mov_avg7', baseline_tickers)]) # creates a tibble for the model
 
 baseline <- zoo(df_model, order.by = time.points) #creates a time series for stocks and time.points
 
 ```
 
-Seasonality Tests
+# Seasonality Tests
 
-First attempt with default values for the arguments - no seasonality
+##no seasonality
 ```{r}
+ptm <- proc.time() #starts the clock
 impact_none <- CausalImpact(baseline, 
                             pre.period, 
                             post.period,
                             alpha = 0.05,
                             model.args = list(
-                            niter = 1000
+                            niter = 10000
                             # prior.level.sd = 0.01, #default is 0.01
                             # nseasons = 12, #default is 1
                             # season.duration = 30, #default is 1
@@ -258,9 +267,10 @@ impact_none <- CausalImpact(baseline,
 summary(impact_none)
 # impact_none$model$model.args
 
+proc.time() - ptm #stops the clock
 ```
 
-Adding in Daily Seasonality
+## Daily Seasonality
 ```{r}
 ptm <- proc.time() #starts the clock
 
@@ -269,7 +279,7 @@ impact_daily <- CausalImpact(baseline,
                             post.period,
                             alpha = 0.05,
                             model.args = list(
-                            niter = 1000,
+                            niter = 10000,
                             # prior.level.sd = 0.01, #default is 0.01
                             nseasons = 7, #default is 1
                             season.duration = 1 #default is 1
@@ -284,7 +294,7 @@ summary(impact_daily)
 proc.time() - ptm #stops the clock
 ```
 
-Weekly seasonality
+## Weekly seasonality
 ```{r}
 ptm <- proc.time() #starts the clock
 
@@ -293,7 +303,7 @@ impact_weekly <- CausalImpact(baseline,
                             post.period,
                             alpha = 0.05,
                             model.args = list(
-                            niter = 1000,
+                            niter = 10000,
                             # prior.level.sd = 0.01, #default is 0.01
                             nseasons = 52, #default is 1
                             season.duration = 7 #default is 1
@@ -309,8 +319,7 @@ proc.time() - ptm #stops the clock
 
 ```
 
-
-Monthly
+## Monthly Seasonality
 ```{r}
 ptm <- proc.time() #starts the clock
 
@@ -319,7 +328,7 @@ impact_monthly <- CausalImpact(baseline,
                             post.period,
                             alpha = 0.05,
                             model.args = list(
-                            niter = 1000,
+                            niter = 10000,
                             # prior.level.sd = 0.01, #default is 0.01
                             nseasons = 12, #default is 1
                             season.duration = 30 #default is 1
@@ -333,7 +342,8 @@ summary(impact_monthly)
 
 proc.time() - ptm #stops the clock
 ```
-Quarterly
+
+## Quarterly Seasonality
 ```{r}
 ptm <- proc.time() #starts the clock
 
@@ -342,7 +352,7 @@ impact_quarterly <- CausalImpact(baseline,
                             post.period,
                             alpha = 0.05,
                             model.args = list(
-                            niter = 1000,
+                            niter = 10000,
                             # prior.level.sd = 0.01, #default is 0.01
                             nseasons = 4, #default is 1
                             season.duration = 91 #default is 1
@@ -354,7 +364,7 @@ impact_quarterly <- CausalImpact(baseline,
 summary(impact_quarterly)
 ```
 
-None and daily have the lowest p-values.  I'll attempt to use daily to nail down a final model
+## shows all results.  The default model produces the best results, but daily is close as well.  None of them are significant
 ```{r}
 init_results <- data.frame(none = impact_none$summary$p[1],
                            daily = impact_daily$summary$p[1],
@@ -365,17 +375,17 @@ init_results
 
 ```
 
-
-Function to hypertune parameters
+# Function to hypertune parameters
+## Creats a grid of various hyperparameters.  Will try daily seasonality first
 ```{r}
 #default is the first value
-param_grid = list(niter = c(10000), 
-                  standardize.data = c(TRUE),
-                  prior.level.sd = c(0.01, 0.001, 0.1),
-                  nseasons = c(7),
-                  season.duration = c(1),
-                  dynamic.regression = c(FALSE),
-                  max.flips = c(-1,1000,10000)
+param_grid = list(niter = c(10000), # default is 1000
+                  standardize.data = c(TRUE), #default is true
+                  prior.level.sd = c(0.01,0.1), # default is 0.01
+                  nseasons = c(1), #default is 1
+                  season.duration = c(1), #default is 1
+                  dynamic.regression = c(FALSE), #default is false
+                  max.flips = c(-1,10,25,50) #default is -1
                  )
 
 # Generate all combinations of parameters
@@ -383,19 +393,19 @@ params = expand.grid(param_grid)
 params
 ```
 
-```{r}
+```{r include=FALSE}
+#creates a test parameter grid
 n <- 2
 test_param <- params[c(sample(1:nrow(params), n, replace = FALSE)),]
 test_param
 ```
 
-
+## Setup for function
 ```{r}
+
 #creates an empty list to store p values of each model
 p = c()
-```
 
-```{r}
 ptm <- proc.time() #starts the clock
 for(i in 1:nrow(params)){
 # for(i in 1:nrow(test_param)){
@@ -426,19 +436,24 @@ for(i in 1:nrow(params)){
  proc.time() - ptm #stops the clock
 ```
 
+## Results of Modeling
 ```{r}
 results <- data.frame(params,p) %>% arrange(p)
 results
 ```
-none of the results are significant, so I'll try to shorten the pre-period to see if better results are acquired, lowering the iterations so it moves faster
+#### none of the results are significant, so I'll try to shorten the pre-period to see if better results are acquired, lowering the iterations so it moves faster.  It could be that there was no significant increase on sales when there was a price increase, but the assumption is that sales would have gone noticeably down
+
+
+
+## Adjust the start dates
 ```{r}
 param_grid = list(niter = c(1000), 
                   standardize.data = c(TRUE),
-                  prior.level.sd = c(0.01, 0.001, 0.1),
-                  nseasons = c(),
+                  prior.level.sd = c(0.01, 0.1),
+                  nseasons = c(1),
                   season.duration = c(1),
                   dynamic.regression = c(FALSE),
-                  max.flips = c(-1,1,5),
+                  max.flips = c(-1,10,25,50),
                   pre.start = as.Date(c("2021-01-14","2022-01-14","2022-07-14"))
                  )
 
@@ -448,23 +463,31 @@ params
 ```
 
 ```{r}
+
 #creates an empty list to store p values of each model
 p = c()
-```
 
-```{r}
 ptm <- proc.time() #starts the clock
 
+#pre.start <- defined below
 pre.end <- "2023-01-14" #end of pre period
 post.start <- "2023-01-15" #intervention start
 post.end <- "2023-02-27" #end of data/intervention end
-time.points <- df_final_7dma_5dma[,1]
+
 
 for(i in 1:nrow(params)){
 # for(i in 1:nrow(test_param)){
 
+  # uses a different start date
   pre.period <- as.Date(c(params[i,8], pre.end))
   post.period <- as.Date(c(post.start,post.end))
+
+  #adjust the time points based on the start date
+  df_final_7dma_5dma <- df_final_7dma_5dma %>% filter(ref_date >= params[i,8])
+  time.points <- seq.Date(as.Date(params[i,8]), as.Date(post.end), by =1)
+  baseline <- zoo(df_model, order.by = time.points)
+    
+  
   
   # Fit a model using one parameter combination
   m = CausalImpact(baseline,
@@ -496,6 +519,7 @@ for(i in 1:nrow(params)){
 results <- data.frame(params,p) %>% arrange(p)
 results
 ```
+# Only 1000 iterations were used so that it would run faster. A start date of 2022-01-14 appears to give us more significant results.  Additionally, a prior level sd of 0.01 also appears to be better than 0.10
 
 ##Final Model
 
@@ -506,12 +530,72 @@ pre.start <- "2022-01-14"  #start of pre period
 pre.end <- "2023-01-14" #end of pre period
 post.start <- "2023-01-15" #intervention start
 post.end <- "2023-02-27" #end of data/intervention end
-time.points <- df_final_7dma_5dma[,1]
+
+time.points <- time.points <- seq.Date(as.Date(pre.start), as.Date(post.end), by =1)
+df_model <-
+baseline <- zoo(df_model, order.by = time.points)
 
 pre.period <- as.Date(c(pre.start, pre.end))
 post.period <- as.Date(c(post.start,post.end))
 
 impact <- CausalImpact(baseline, 
+                       pre.period, 
+                       post.period,
+                       alpha = 0.05,
+                       model.args = list(
+                         niter = 250000,
+                         prior.level.sd = 0.01, #default is 0.01
+                         nseasons = 1, #default is 1
+                         season.duration = 1, #default is 1
+                         #dynamic.regression = FALSE, #default is FALSE
+                         max.flips = 50 #default is -1                         
+                          )
+                       )
+time <- proc.time() - ptm #stops the clock
+time[3]/60
+```
+
+```{r}
+summary(impact)
+plot(impact)
+```
+
+```{r}
+summary(impact,"report")
+```
+
+Test the model by changing the pre and post dates.  In theory, there shoulnd't be any effect since the price increase hadn't occurred
+
+```{r}
+pre.start <- "2022-01-14"  #start of pre period
+pre.end <- "2022-12-01" #end of pre period
+post.start <- "2022-12-02" #intervention start
+post.end <- "2023-01-14" #end of data/intervention end
+pre.period <- as.Date(c(pre.start, pre.end))
+post.period <- as.Date(c(post.start,post.end))
+
+df_final_7dma_5dma_back_test <- df_final_7dma_5dma %>% 
+  filter(ref_date >= as.Date(pre.start) & ref_date <= as.Date(post.end))
+
+time.points <- df_final_7dma_5dma_back_test[,1]
+
+```
+
+```{r}
+baseline_tickers <- a_7dma_5dma_log$data$variables[1:50] #takes the first 50 stocks from the df
+
+m_7dma_5dma_log_back_test <- log(df_final_7dma_5dma_back_test[,-1])
+
+df_model_back_test <- as_tibble(m_7dma_5dma_log_back_test[,c('mov_avg7', baseline_tickers)]) #creates a tibble for the model
+
+baseline <- zoo(df_model_back_test, order.by = time.points) #creates a time series for stocks and time.points
+```
+
+
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_back_test <- CausalImpact(baseline, 
                        pre.period, 
                        post.period,
                        alpha = 0.05,
@@ -527,14 +611,13 @@ impact <- CausalImpact(baseline,
 time <- proc.time() - ptm #stops the clock
 time[3]/60
 ```
-
 ```{r}
-summary(impact)
-plot(impact)
+summary(impact_back_test)
+plot(impact_back_test)
 ```
 
 ```{r}
-summary(impact,"report")
+summary(impact_back_test,"report")
 ```
 
 ```{r}
@@ -551,23 +634,7 @@ df_model_coeffs <- a %>%
 df_model_coeffs
 ```
 
-```{r}
-plot(x = abs(df_model_coeffs$.))
-```
-
-```{r}
-point_pred <- impact$series$point.pred
-response <- impact$series$response
-point_effect <- impact$series$point.effect
-
-pp <- as.data.frame(response, point_pred, point_effect)
-
-pp$date <- row.names(pp)
-point.pred <- point.pred %>%
-  select(date, response, point_pred,point_effect)
-
-```
-
+reverses the zoo, remove NAs, selects columns, reverse logs, filters, finds difference
 ```{r}
 df_series_results <- fortify(impact$series) %>% 
   na.omit() %>% 
@@ -583,12 +650,7 @@ df_series_results <- fortify(impact$series) %>%
 df_series_results
 ```
 
-```{r}
-impact.plot <- plot(impact)
-impact.plot <- impact.plot + theme_bw(base_size = 20)
-impact.plot
-```
-
+plots the results
 ```{r}
 ggplot(df_series_results, aes(x = Date)) +
   geom_line(aes(y = response, color = "Actual")) +
