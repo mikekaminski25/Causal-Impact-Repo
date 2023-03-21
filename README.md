@@ -1,2 +1,2 @@
 # Causal-Impact-Repo
-"This is a line from RStudio"
+This repo goes through an analysis of the CausalImpact Package
