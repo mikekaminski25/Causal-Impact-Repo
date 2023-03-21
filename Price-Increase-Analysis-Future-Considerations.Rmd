@@ -270,7 +270,7 @@ summary(impact_none)
 proc.time() - ptm #stops the clock
 ```
 
-## Daily Seasonality
+## Day of Week Seasonality
 ```{r}
 ptm <- proc.time() #starts the clock
 
@@ -665,4 +665,204 @@ ggplot(df_series_results, aes(x = Date)) +
 
 ```
 
+```{r}
+> predicted <- impact$series[,"point.pred"]
+> actual <- impact$series[,"response"]
+> errors <- actual - predicted
+> mae <- mean(abs(errors))
+```
 
+
+small prior
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_small_prior <- CausalImpact(baseline, 
+                                pre.period, 
+                                post.period,
+                                model.args = list(
+                                  niter = 100000,
+                                  prior.level.sd = 0.01, #default is 0.01
+                                  standardize.data = True # default is TRUE
+                                  # nseasons = 1, #default is 1
+                                  # season.duration = 1, #default is 1
+                                  # dynamic.regression = FALSE, #default is FALSE
+                                  # max.flips = -1 #default is -1
+                                  )
+                                )
+                                
+summary(impact_small_prior)
+
+proc.time() - ptm #stops the clock
+```
+
+```{r}
+summary(impact_small_prior)
+plot(impact_small_prior)
+```
+#Back test
+backtest the model - it should not produce a significant result
+
+```{r}
+# change the dates to validate
+pre.start <- "2020-03-01" #start of pre period
+pre.end <- "2022-01-14" #end of pre period
+post.start <- "2022-01-15" #intervention start
+post.end <- "2022-02-27" #end of data/intervention end
+
+pre.period <- as.Date(c(pre.start, pre.end))
+post.period <- as.Date(c(post.start,post.end))
+
+model_df_clean_validate <- model_df %>% 
+  filter(ref_date >= pre.start) %>% 
+  filter(ref_date <= post.end) %>%
+  select(-c(ref_date)) %>% log()
+
+time.points <- seq.Date(as.Date(pre.start), as.Date(post.end), by =1)
+```
+
+```{r}
+baseline_tickers <- a_7dma_5dma_log$data$variables[1:50] #takes the first 50 stocks from the correlation created earlier.
+
+model_df_clean_validate1 <- as_tibble(model_df_clean_validate[,c('mov_avg7', baseline_tickers)]) # creates a tibble for the model
+
+baseline <- zoo(model_df_clean_validate1, order.by = time.points) #creates a time series for stocks and time.points
+```
+
+
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_small_prior <- CausalImpact(baseline, 
+                                pre.period, 
+                                post.period,
+                                model.args = list(
+                                  niter = 100000,
+                                  prior.level.sd = 0.001, #default is 0.01
+                                  standardize.data = FALSE # default is TRUE
+                                  # nseasons = 1, #default is 1
+                                  # season.duration = 1, #default is 1
+                                  # dynamic.regression = FALSE, #default is FALSE
+                                  # max.flips = -1 #default is -1
+                                  )
+                                )
+                                
+summary(impact_small_prior)
+
+proc.time() - ptm #stops the clock
+
+```
+
+```{r}
+summary(impact_small_prior)
+plot(impact_small_prior)
+```
+
+does not look good
+
+#normal prior.level.sd
+
+```{r}
+pre.start <- "2020-03-01" #start of pre period
+pre.end <- "2023-01-14" #end of pre period
+post.start <- "2023-01-15" #intervention start
+post.end <- "2023-02-27" #end of data/intervention end
+
+pre.period <- as.Date(c(pre.start, pre.end))
+post.period <- as.Date(c(post.start,post.end))
+
+model_df_clean <- model_df %>% filter(ref_date >= pre.start) %>% select(-c(ref_date)) %>% log()
+
+time.points <- seq.Date(as.Date(pre.start), as.Date(post.end), by =1)
+```
+
+
+Other variables are needed for the model  The first 50 most correlated stocks will be used initially.  The top 100 were all fairly high, so it might be worth exploring all 100, more than 100, and/or less than 100. 
+```{r}
+baseline_tickers <- a_7dma_5dma_log$data$variables[1:5] #takes the first 50 stocks from the correlation created earlier.
+
+model_df_clean1 <- as_tibble(model_df_clean[,c('mov_avg7', baseline_tickers)]) # creates a tibble for the model
+
+baseline <- zoo(model_df_clean1, order.by = time.points) #creates a time series for stocks and time.points
+```
+
+
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_def_prior <- CausalImpact(baseline, 
+                                pre.period, 
+                                post.period,
+                                model.args = list(
+                                  niter = 100000,
+                                  prior.level.sd = 0.01, #default is 0.01
+                                  standardize.data = TRUE # default is TRUE
+                                  # nseasons = 1, #default is 1
+                                  # season.duration = 1, #default is 1
+                                  # dynamic.regression = FALSE, #default is FALSE
+                                  # max.flips = -1 #default is -1
+                                  )
+                                )
+                                
+summary(impact_def_prior)
+
+proc.time() - ptm #stops the clock
+```
+
+```{r}
+summary(impact_def_prior)
+plot(impact_def_prior)
+```
+Doesn't appear to have a significant impact.
+
+#backtest the model
+```{r}
+# change the dates to validate
+pre.start <- "2020-03-01" #start of pre period
+pre.end <- "2022-11-14" #end of pre period
+post.start <- "2022-11-15" #intervention start
+post.end <- "2022-12-27" #end of data/intervention end
+
+pre.period <- as.Date(c(pre.start, pre.end))
+post.period <- as.Date(c(post.start,post.end))
+
+model_df_clean_validate <- model_df %>% 
+  filter(ref_date >= pre.start) %>% 
+  filter(ref_date <= post.end) %>%
+  select(-c(ref_date)) %>% log()
+
+time.points <- seq.Date(as.Date(pre.start), as.Date(post.end), by =1)
+```
+
+```{r}
+baseline_tickers <- a_7dma_5dma_log$data$variables[1:5] #takes the first 50 stocks from the correlation created earlier.
+
+model_df_clean_validate1 <- as_tibble(model_df_clean_validate[,c('mov_avg7', baseline_tickers)]) # creates a tibble for the model
+
+baseline <- zoo(model_df_clean_validate1, order.by = time.points) #creates a time series for stocks and time.points
+
+bsts_impact_def_prior <-  impact_def_prior$series
+```
+
+```{r}
+ptm <- proc.time() #starts the clock
+
+impact_def_prior <- CausalImpact(baseline, 
+                                pre.period, 
+                                post.period,
+                                model.args = list(
+                                  niter = 10000,
+                                  prior.level.sd = 0.01, #default is 0.01
+                                  standardize.data = TRUE # default is TRUE
+                                  # nseasons = 1, #default is 1
+                                  # season.duration = 1, #default is 1
+                                  # dynamic.regression = FALSE, #default is FALSE
+                                  # max.flips = -1 #default is -1
+                                  ),
+                                bsts.model = bsts_impact_def_prior
+                                )
+                                
+summary(impact_def_prior)
+
+proc.time() - ptm #stops the clock
+```
